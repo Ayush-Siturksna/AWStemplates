@@ -1,0 +1,295 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: This template create an Application Load Balancer
+
+
+
+Parameters:
+  Customerstring:
+    Description: Customer string
+    Type: String
+
+  Environment:
+    Description: Prod/Nonprod
+    Type: String 
+
+  SID:
+    Description: Systemid
+    Type: String   
+
+  Hostname:
+    Description: Hostname
+    Type: String     
+
+  AcmCertificate:
+    Description: The ARN of the AWS Certification Manager's certificate
+    Type: String
+  Bport:  
+    Description: The backend port
+    Type: Number
+  VPCId:
+    Description: The VPC
+    Type: List<AWS::EC2::VPC::Id>
+  subnets:
+    Description: Subnet IDs
+    Type: "List<AWS::EC2::Subnet::Id>"
+  Securitygrps:
+    Description: The Securitygrp
+    Type: List<AWS::EC2::SecurityGroup::Id>   
+  Instanceid:
+    Description: The Instances
+    Type: List<AWS::EC2::Instance::Id>
+
+       
+
+Resources:
+#Create an Application Load Balancer
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DeletionPolicy: Retain
+    Properties:
+      Name:  !Join
+                  - '-'
+                  - - 'lb'
+                    - !Ref Customerstring
+                    - 'ext-IB'
+                    - !Ref Environment
+      
+      SecurityGroups:
+        - !Select [0,!Ref Securitygrps]
+      Subnets: 
+        - !Select [0,!Ref subnets]
+        - !Select [1,!Ref subnets]
+
+     
+
+#Create a Listener on Port 80
+  ALBListenerNoSslCertificate:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    DeletionPolicy: Retain
+    Properties:
+      DefaultActions:
+        - RedirectConfig:
+            Host: '#{host}'
+            Path: '/#{path}'
+            Port: '443'
+            Protocol: HTTPS
+            StatusCode: HTTP_301
+          Type: redirect
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+#Create a Listener on Port 443
+  ALBListenerSslCertificate:
+    Type : AWS::ElasticLoadBalancingV2::Listener
+    DeletionPolicy: Retain
+    Properties:
+      Certificates:
+        - CertificateArn: !Ref AcmCertificate
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig: 
+            ContentType: text/plain
+            MessageBody: ''
+            StatusCode: 503
+          
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS-1-2-2017-01
+
+# Create a Target Group
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DeletionPolicy: Retain
+    Properties:
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: /sap/wdisp/admin/public/default.html
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Matcher:
+        HttpCode: 200-499
+      Name:  !Join
+                  - '-'
+                  - - 'tg-ext-IB'
+                    - !Ref Environment
+                    - !Ref SID
+                    - !Ref Bport
+
+      Port: !Ref Bport
+      Protocol: HTTPS
+      UnhealthyThresholdCount: 5
+      TargetType: instance
+      Targets:
+        - Id: 
+            !Select [0,!Ref Instanceid]
+          Port: !Ref Bport 
+
+      VpcId: !Select [0,!Ref VPCId]
+
+  listenerRule:   
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    DeletionPolicy: Retain
+    Properties: 
+        Actions: 
+          - Type: forward
+            TargetGroupArn: !Ref ALBTargetGroup
+          
+        Conditions: 
+          -  Field: host-header
+             HostHeaderConfig: 
+               Values:
+               - !Ref Hostname
+    
+        ListenerArn: !Ref ALBListenerSslCertificate
+        Priority: 1 
+
+  WAFrule:
+    Type: AWS::WAFv2::WebACL
+    DeletionPolicy: Retain
+    Properties:
+      Name:  !Join
+                  - '-'
+                  - - 'waf'
+                    - 'lb'
+                    - !Ref Customerstring
+                    - 'ext-IB'
+                    - !Ref Environment
+      Scope: REGIONAL
+      Description: This is an LB WebACL
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName:   !Join
+                          - '-'
+                          - - 'waf'
+                            - 'lb'
+                            - !Ref Customerstring
+                            - 'ext-IB'
+                            - !Ref Environment 
+      Rules:
+        - Name: AWS-AWSManagedRulesCommonRuleSet
+          Priority: 0            
+          OverrideAction:
+            Count: {} 
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: AWS-AWSManagedRulesCommonRuleSet
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+              
+        
+        - Name: AWS-AWSManagedRulesAmazonIpReputationList
+          Priority: 1
+          OverrideAction:
+            Count: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: AWS-AWSManagedRulesAmazonIpReputationList
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesAmazonIpReputationList
+              
+        - Name: AWS-AWSManagedRulesAnonymousIpList
+          Priority: 2
+          OverrideAction:
+            Count: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: AWS-AWSManagedRulesAnonymousIpList
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesAnonymousIpList
+              
+
+        - Name: AWS-AWSManagedRulesSQLiRuleSet
+          Priority: 3
+          OverrideAction:
+            Count: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: AWS-AWSManagedRulesSQLiRuleSet
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesSQLiRuleSet
+              
+
+        - Name: AWS-AWSManagedRulesPHPRuleSet
+          Priority: 4
+          OverrideAction:
+            Count: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: AWS-AWSManagedRulesPHPRuleSet
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesPHPRuleSet
+              
+        - Name: AWS-AWSManagedRulesLinuxRuleSet
+          Priority: 5
+          OverrideAction:
+            Count: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: AWS-AWSManagedRulesLinuxRuleSet
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesLinuxRuleSet
+              
+
+        - Name: AWS-AWSManagedRulesKnownBadInputsRuleSet
+          Priority: 6
+          OverrideAction:
+            Count: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: AWS-AWSManagedRulesKnownBadInputsRuleSet
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesKnownBadInputsRuleSet  
+              
+  WebACLAssociation:
+    Type: 'AWS::WAFv2::WebACLAssociation'
+    DeletionPolicy: Retain
+    Properties:
+      ResourceArn: !Ref ApplicationLoadBalancer
+      WebACLArn: !GetAtt WAFrule.Arn
+                
+        
+
+Outputs:
+# Export Target Group
+ 
+
+# Export Application Load Balancer Dns Name
+  ApplicationLoadBalancerDnsName:
+    Description: Application Load Balancer DNS Name
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+
+# Export Application Load Balancer Zone ID
+  ApplicationLoadBalancerZoneID:
+    Description: Application Load Balancer Canonical Hosted Zone ID
+    Value: !GetAtt ApplicationLoadBalancer.CanonicalHostedZoneID
+
+  VpcSubnet:
+    Description: Application Load Balancer Canonical Hosted Zone ID
+    Value: subnet_here
+   

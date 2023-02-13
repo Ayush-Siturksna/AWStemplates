@@ -1,0 +1,73 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'test template'
+
+Parameters:
+ 
+ customerstring:
+    Description: Customer String 
+    Type: String
+
+ number:
+    Description: Number of vpn
+    Type: String  
+
+ cgwipadress:
+    Description: ip 
+    Type: String
+
+ vpgid:
+    Description: vpgid
+    Type: String
+
+
+
+Resources: 
+
+
+  CGW:
+    Type: AWS::EC2::CustomerGateway
+    DeletionPolicy: Retain
+    Properties: 
+      BgpAsn: 65000
+      IpAddress: !Ref cgwipadress
+      Tags: 
+      - Key: "Name"
+        Value: !Join
+                  - '-'
+                  - - 'CGW'
+                    - !Ref customerstring
+                    - !Ref number
+      - Key: "keyname2"
+        Value: "value2"
+
+      Type: ipsec.1
+  VPNConnection: 
+      Type: AWS::EC2::VPNConnection
+      DeletionPolicy: Retain
+      Properties: 
+        Type: ipsec.1
+        Tags: 
+        - Key: "Name"
+          Value: !Join
+                    - '-'
+                    - - 'VPN'
+                      - !Ref customerstring
+                      - !Ref number
+        StaticRoutesOnly: true
+        CustomerGatewayId: 
+          !Ref CGW
+        VpnGatewayId: 
+          !Ref vpgid
+ 
+
+
+
+
+  # #!PyPlate
+  # output = []
+  # for ip in params['RouteEntries']:
+  #   for i in range[0:Fn::Length : Array]:
+  #     output[name] = { "Type": "AWS::EC2::VPNConnectionRoute", "Properties": {"DestinationCidrBlock": ip ,"VpnConnectionId":{ "Ref" : "VPNConnection" }} }
+      
+
